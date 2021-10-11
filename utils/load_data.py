@@ -1,10 +1,11 @@
 import numpy as np
 import torchvision
 import torch
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GroupShuffleSplit
 from video_loader import MinMaxScaler
 from video_loader import VideoLoader
 from video_loader import VideoClipLoader
+import csv
 
 def load_balls_data(batch_size):
     
@@ -18,8 +19,8 @@ def load_balls_data(batch_size):
 
     return train_loader
 
-def load_bamc_data(batch_size):   
-    video_path = "/home/cm3786@drexel.edu/bamc_data/"
+def load_bamc_data(batch_size, train_ratio, seed=None):   
+    video_path = "/shared_data/cropped_pleural_lines/"
     
     scale = 0.2
     
@@ -32,30 +33,57 @@ def load_bamc_data(batch_size):
     width = round(cropped_width * scale)
     height = round(cropped_height * scale)
     
+    video_to_participant = {}
+    with open('/shared_data/bamc_data/bamc_video_info.csv', 'r') as csv_in:
+        reader = csv.DictReader(csv_in)
+        for row in reader:
+            key = row['Filename'].split('.')[0].lower().replace('_clean', '')
+            if key == '37 (mislabeled as 38)':
+                key = '37'
+            video_to_participant[key] = row['Participant_id']
+            
+    
     transforms = torchvision.transforms.Compose([torchvision.transforms.Grayscale(num_output_channels=1),
                                                  torchvision.transforms.CenterCrop(size=(cropped_height, cropped_width)),
                                                  torchvision.transforms.Resize(size=(width, height)), 
-                                                 MinMaxScaler(0, 255)])
+                                                 MinMaxScaler(0, 255),
+                                                torchvision.transforms.RandomRotation(15)])
     dataset = VideoLoader(video_path, transform=transforms, num_frames=60)
     
     targets = dataset.get_labels()
     
-    train_idx, test_idx = train_test_split(np.arange(len(targets)), test_size=0.2, shuffle=True, stratify=targets)
-    
-    train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
-    test_sampler = torch.utils.data.SubsetRandomSampler(test_idx)
-    
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+    if train_ratio == 1.0:
+        train_idx = np.arange(len(targets))
+        train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
+        train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
                                                # shuffle=True,
                                                sampler=train_sampler)
-    test_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                                    # shuffle=True,
-                                                    sampler=test_sampler)
+        test_loader = None
+    else:
+        gss = GroupShuffleSplit(n_splits=1, train_size=train_ratio, random_state=seed)
+
+        groups = [video_to_participant[v] for v in dataset.get_filenames()]
+
+        train_idx, test_idx = next(gss.split(np.arange(len(targets)), targets, groups))
+
+    #     train_idx, test_idx = train_test_split(np.arange(len(targets)), test_size=0.2, shuffle=True, stratify=targets)
+
+        train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
+        test_sampler = torch.utils.data.SubsetRandomSampler(test_idx)
+
+        train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+                                                   # shuffle=True,
+                                                   sampler=train_sampler)
+
+        test_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+                                                        # shuffle=True,
+                                                        sampler=test_sampler)
 
     return train_loader, test_loader
 
-def load_covid_data(batch_size, clip_length_in_frames=10, frame_rate=20):   
-    video_path = "/home/cm3786@drexel.edu/Projects/covid19_ultrasound/data/pocus_videos/convex"
+def load_covid_data(batch_size, clip_length_in_frames=10, frame_rate=20, train_ratio=0.8):   
+    video_path = "/home/dwh48@drexel.edu/covid19_ultrasound/data/pocus_videos/convex"
+    meta_path = "/home/dwh48@drexel.edu/covid19_ultrasound/data/dataset_metadata.csv"
     # video_path = "/home/cm3786@drexel.edu/Projects/covid19_ultrasound/data/pocus_videos/pneumonia-viral"
     
     scale = 0.5
@@ -77,11 +105,12 @@ def load_covid_data(batch_size, clip_length_in_frames=10, frame_rate=20):
                                                  #torchvision.transforms.CenterCrop(size=(cropped_height, cropped_width)),
                                                  torchvision.transforms.Resize(size=(width, height)), 
                                                  MinMaxScaler(0, 255)])
-    dataset = VideoClipLoader(video_path, transform=transforms,
+    dataset = VideoClipLoader(video_path, meta_path, transform=transforms,
                               clip_length_in_frames=clip_length_in_frames,
                               frame_rate=frame_rate)
     
     targets = dataset.get_video_labels()
+
     train_vidx, test_vidx = train_test_split(np.arange(len(targets)), test_size=0.2, shuffle=True, stratify=targets)
     
     train_vidx = set(train_vidx)

@@ -16,7 +16,7 @@ class ConvSparseLayer(nn.Module):
     An implementation of a Convolutional Sparse Layer
     """
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1,
-                 padding=0, shrink=0.25, lam=0.5, activation_lr=1e-1,
+                 padding=0, lam=0.5, activation_lr=1e-1,
                  max_activation_iter=200, rectifier=True, convo_dim=2):
         super().__init__()
 
@@ -28,11 +28,6 @@ class ConvSparseLayer(nn.Module):
             self.kernel_size = self.conv_dim * (kernel_size,)
         else:
             self.kernel_size = kernel_size
-
-        if isinstance(stride, int):
-            self.stride = self.conv_dim * (stride,)
-        else:
-            self.stride = stride
 
         if isinstance(stride, int):
             self.stride = self.conv_dim * (stride,)
@@ -53,11 +48,10 @@ class ConvSparseLayer(nn.Module):
         torch.nn.init.xavier_uniform_(self.filters)
         self.normalize_weights()
 
-        self.shrink = shrink
         if rectifier:
-            self.threshold = ShiftedReLU(shrink)
+            self.threshold = ShiftedReLU(lam)
         else:
-            self.threshold = nn.Softshrink(shrink)
+            self.threshold = nn.Softshrink(lam)
 
         if self.conv_dim == 1:
             self.convo = conv1d
@@ -103,38 +97,48 @@ class ConvSparseLayer(nn.Module):
                          stride=self.stride)
         du += acts
         return du
+    
+    def get_output_shape(self, images):
+        output_shape = []
+        if self.conv_dim >= 1:
+            output_shape.append(math.floor(((images.shape[2] + 2 *
+                                           self.padding[0] -
+                                           (self.kernel_size[0] - 1) - 1) /
+                                          self.stride[0]) + 1))
+        if self.conv_dim >= 2:
+            output_shape.append(math.floor(((images.shape[3] + 2 *
+                                           self.padding[1] -
+                                           (self.kernel_size[1] - 1) - 1) /
+                                          self.stride[1]) + 1))
+        if self.conv_dim >= 3:
+            output_shape.append(math.floor(((images.shape[4] + 2 *
+                                           self.padding[2] -
+                                           (self.kernel_size[2] - 1) - 1) /
+                                          self.stride[2]) + 1))
+            
+        return output_shape
+        
 
-    def activations(self, images):
+    def activations(self, images, u_init):
         with torch.no_grad():
-            output_shape = []
-            if self.conv_dim >= 1:
-                output_shape.append(math.floor(((images.shape[2] + 2 *
-                                               self.padding[0] -
-                                               (self.kernel_size[0] - 1) - 1) /
-                                              self.stride[0]) + 1))
-            if self.conv_dim >= 2:
-                output_shape.append(math.floor(((images.shape[3] + 2 *
-                                               self.padding[1] -
-                                               (self.kernel_size[1] - 1) - 1) /
-                                              self.stride[1]) + 1))
-            if self.conv_dim >= 3:
-                output_shape.append(math.floor(((images.shape[4] + 2 *
-                                               self.padding[2] -
-                                               (self.kernel_size[2] - 1) - 1) /
-                                              self.stride[2]) + 1))
+            output_shape = self.get_output_shape(images)
             # print('input shape', images.shape)
             # print('output shape', output_shape)
 
-            u = torch.zeros([images.shape[0], self.out_channels] +
-                    output_shape, device=self.filters.device)
+#             u = torch.zeros([images.shape[0], self.out_channels] +
+#                     output_shape, device=self.filters.device)
+#             u = torch.full([images.shape[0], self.out_channels] +
+#                     output_shape, fill_value=self.lam, device=self.filters.device)
+            u = u_init.detach().clone().to(self.filters.device)
             for i in range(self.max_activation_iter):
                 du = self.u_grad(u, images)
+#                 print(torch.sum(du))
                 # print("grad_norm={}, iter={}".format(torch.norm(du), i))
                 u += self.activation_lr * du
                 if torch.norm(du) < 0.01:
                     break
 
-        return self.threshold(u)
+        return self.threshold(u), u
 
-    def forward(self, images):
-        return self.activations(images)
+    def forward(self, images, u_init):
+        return self.activations(images, u_init)
