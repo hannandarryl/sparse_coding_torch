@@ -122,11 +122,9 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--lam', default=0.05, type=float)
     parser.add_argument('--output_dir', default='./output', type=str)
-    parser.add_argument('--checkpoint', default=None, type=str)
+    parser.add_argument('--checkpoint', required=True, type=str)
     parser.add_argument('--num_folds', default=1, type=int)
     parser.add_argument('--pca', action='store_true')
-    parser.add_argument('--train_sparse', action='store_true')
-    parser.add_argument('--recon_scale', default=1.0, type=float)
     
     args = parser.parse_args()
     
@@ -164,15 +162,12 @@ if __name__ == "__main__":
                                    lam=args.lam,
                                    max_activation_iter=args.max_activation_iter,
                                    activation_lr=args.activation_lr)
-        if args.checkpoint:
-            sparse_param = torch.load(args.checkpoint)
-            frozen_sparse.load_state_dict(sparse_param['model_state_dict'])
-
+        sparse_param = torch.load(args.checkpoint)
+        frozen_sparse.load_state_dict(sparse_param['model_state_dict'])
         frozen_sparse.to(device)
 
-        if not args.train_sparse:
-            for param in frozen_sparse.parameters():
-                param.requires_grad = False
+        for param in frozen_sparse.parameters():
+            param.requires_grad = False
             
         pca = None
         
@@ -210,8 +205,7 @@ if __name__ == "__main__":
                 pred, activations, u_init = predictive_model(local_batch, u_init)
 
                 loss = criterion(pred, torch_labels)
-                if args.train_sparse:
-                    loss += args.recon_scale * frozen_sparse.loss(local_batch, activations)
+                # loss += frozen_sparse.loss(local_batch, activations)
                 epoch_loss += loss.item() * local_batch.size(0)
 
                 prediction_optimizer.zero_grad()
@@ -264,7 +258,7 @@ if __name__ == "__main__":
                     'model_state_dict': predictive_model.state_dict(),
                     'optimizer_state_dict': prediction_optimizer.state_dict(),
                 }, os.path.join(output_dir, "model-best.pt"))
-                best_so_far = accuracy
+                best_so_far = f1
                 
         checkpoint = torch.load(os.path.join(output_dir, "model-best.pt"))
         predictive_model.load_state_dict(checkpoint['model_state_dict'])

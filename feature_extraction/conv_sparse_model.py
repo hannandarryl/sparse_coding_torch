@@ -8,7 +8,7 @@ from torch.nn.functional import conv_transpose1d
 from torch.nn.functional import conv_transpose2d
 from torch.nn.functional import conv_transpose3d
 
-from utils import ShiftedReLU
+from utils.utils import ShiftedReLU
 
 
 class ConvSparseLayer(nn.Module):

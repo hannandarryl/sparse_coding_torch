@@ -4,11 +4,11 @@ import torch
 from matplotlib import pyplot as plt
 from matplotlib import cm
 from matplotlib.animation import FuncAnimation
-from conv_sparse_model import ConvSparseLayer
+from feature_extraction.conv_sparse_model import ConvSparseLayer
 from tqdm import tqdm
 import argparse
 import os
-from load_data import load_bamc_data, load_covid_data
+from utils.load_data import load_bamc_data, load_covid_data
 
 def load_balls_data(batch_size):
     with open('ball_videos.npy', 'rb') as fin:
