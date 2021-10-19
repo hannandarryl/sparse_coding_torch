@@ -2,6 +2,8 @@
 
 Need to go to utils/load_data.py and change where bamc data is located at top of each method
 
+All files need to be run from project root dir and might need to add project root dir to PYTHONPATH
+
 Main sparse coding file is found at:
 feature_extraction/train_conv3d_sparse_model.py
 
