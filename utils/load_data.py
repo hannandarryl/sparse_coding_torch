@@ -2,7 +2,7 @@ import numpy as np
 import torchvision
 import torch
 from sklearn.model_selection import train_test_split, GroupShuffleSplit
-from utils.video_loader import MinMaxScaler
+from utils.video_loader import MinMaxScaler, VideoGrayScaler
 from utils.video_loader import VideoLoader
 from utils.video_loader import VideoClipLoader, VideoFrameLoader
 import csv
@@ -43,8 +43,8 @@ def load_bamc_data(batch_size, train_ratio, seed=None):
             video_to_participant[key] = row['Participant_id']
             
     
-    transforms = torchvision.transforms.Compose([torchvision.transforms.Grayscale(num_output_channels=1),
-                                                 torchvision.transforms.CenterCrop(size=(cropped_height, cropped_width)),
+    transforms = torchvision.transforms.Compose([VideoGrayScaler(),
+                                                 torchvision.transforms.CenterCrop(size=(cropped_width, cropped_height)),
                                                  torchvision.transforms.Resize(size=(width, height)), 
                                                  MinMaxScaler(0, 255),
                                                 torchvision.transforms.RandomRotation(15)])

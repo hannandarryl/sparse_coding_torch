@@ -127,6 +127,7 @@ if __name__ == "__main__":
     parser.add_argument('--pca', action='store_true')
     parser.add_argument('--train_sparse', action='store_true')
     parser.add_argument('--recon_scale', default=1.0, type=float)
+    parser.add_argument('--seed', default=42, type=int)
     
     args = parser.parse_args()
     
@@ -146,7 +147,7 @@ if __name__ == "__main__":
     all_errors = []
     
     for i_fold in range(args.num_folds):
-        train_loader, test_loader = load_bamc_data(batch_size, 0.8)
+        train_loader, test_loader = load_bamc_data(batch_size, 0.8, args.seed)
         print('Loaded', len(train_loader), 'train examples')
         print('Loaded', len(test_loader), 'test examples')
 

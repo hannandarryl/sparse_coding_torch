@@ -84,9 +84,9 @@ class VideoLoader(Dataset):
         if self.transform:
             video = self.transform(video)
         
-        self.cache[index] = (label, video, filename)
+        self.cache[index] = (label, video)
             
-        return label, video, filename
+        return label, video
         
     def __len__(self):
         return len(self.videos)
