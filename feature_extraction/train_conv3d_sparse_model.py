@@ -8,7 +8,7 @@ from feature_extraction.conv_sparse_model import ConvSparseLayer
 from tqdm import tqdm
 import argparse
 import os
-from utils.load_data import load_bamc_data, load_covid_data
+from utils.load_data import load_bamc_data, load_covid_data, load_bamc_clips
 
 def load_balls_data(batch_size):
     with open('ball_videos.npy', 'rb') as fin:
@@ -102,14 +102,16 @@ if __name__ == "__main__":
     parser.add_argument('--kernel_height', default=16, type=int)
     parser.add_argument('--kernel_width', default=16, type=int)
     parser.add_argument('--kernel_depth', default=8, type=int)
-    parser.add_argument('--num_kernels', default=32, type=int)
-    parser.add_argument('--stride', default=2, type=int)
+    parser.add_argument('--num_kernels', default=128, type=int)
+    parser.add_argument('--stride', default=4, type=int)
     parser.add_argument('--max_activation_iter', default=1000, type=int)
     parser.add_argument('--activation_lr', default=1e-4, type=float)
-    parser.add_argument('--lr', default=3e-4, type=float)
+    parser.add_argument('--lr', default=1e-3, type=float)
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--lam', default=0.01, type=float)
     parser.add_argument('--output_dir', default='./output', type=str)
+    parser.add_argument('--use_clips', action='store_true')
+    parser.add_argument('--seed', default=42, type=int)
     
     args = parser.parse_args()
     
@@ -126,7 +128,10 @@ if __name__ == "__main__":
     else:
         batch_size = args.batch_size
 
-    train_loader, test_loader = load_bamc_data(batch_size, train_ratio=1.0)
+    if args.use_clips:
+        train_loader, test_loader = load_bamc_clips(batch_size, 1.0, num_frames=8, seed=args.seed)
+    else:
+        train_loader, test_loader = load_bamc_data(batch_size, 1.0, args.seed)
     print('Loaded', len(train_loader), 'train examples')
 
     example_data = next(iter(train_loader))
@@ -142,7 +147,7 @@ if __name__ == "__main__":
                                max_activation_iter=args.max_activation_iter,
                                activation_lr=args.activation_lr)
     model = sparse_layer
-    model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3])
+    model = torch.nn.DataParallel(model)
     model.to(device)
 
     learning_rate = args.lr
@@ -161,7 +166,7 @@ if __name__ == "__main__":
         u_init = torch.zeros([batch_size, sparse_layer.out_channels] +
                     sparse_layer.get_output_shape(example_data[1]))
         
-        for labels, local_batch in train_loader:
+        for labels, local_batch, vid_f in train_loader:
             if u_init.size(0) != local_batch.size(0):
                 u_init = torch.zeros([local_batch.size(0), sparse_layer.out_channels] +
                     sparse_layer.get_output_shape(example_data[1]))

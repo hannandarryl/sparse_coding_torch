@@ -4,7 +4,7 @@ import torch
 from sklearn.model_selection import train_test_split, GroupShuffleSplit
 from utils.video_loader import MinMaxScaler, VideoGrayScaler
 from utils.video_loader import VideoLoader
-from utils.video_loader import VideoClipLoader, VideoFrameLoader
+from utils.video_loader import VideoClipLoader, VideoClipLoaderBAMC
 import csv
 
 def load_balls_data(batch_size):
@@ -44,7 +44,6 @@ def load_bamc_data(batch_size, train_ratio, seed=None):
             
     
     transforms = torchvision.transforms.Compose([VideoGrayScaler(),
-                                                 torchvision.transforms.CenterCrop(size=(cropped_width, cropped_height)),
                                                  torchvision.transforms.Resize(size=(width, height)), 
                                                  MinMaxScaler(0, 255),
                                                 torchvision.transforms.RandomRotation(15)])
@@ -129,7 +128,7 @@ def load_covid_data(batch_size, clip_length_in_frames=10, frame_rate=20, train_r
 
     return train_loader, test_loader
 
-def load_bamc_frames(batch_size, train_ratio, seed=None):   
+def load_bamc_clips(batch_size, train_ratio, sparse_model, device, num_frames=1, seed=None):   
     video_path = "/shared_data/bamc_data_scale_cropped/"
     
     scale = 0.2
@@ -153,8 +152,15 @@ def load_bamc_frames(batch_size, train_ratio, seed=None):
             video_to_participant[key] = row['Participant_id']
             
     
-    transforms = torchvision.transforms.Compose([torchvision.transforms.Resize(size=(width, height)), torchvision.transforms.CenterCrop(size=(cropped_height, cropped_width)), torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), torchvision.transforms.RandomRotation(15)])
-    dataset = VideoFrameLoader(video_path, transform=transforms, frame_rate=20)
+#     transforms = torchvision.transforms.Compose([torchvision.transforms.Resize(size=(width, height)), torchvision.transforms.CenterCrop(size=(cropped_height, cropped_width)), torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), torchvision.transforms.RandomRotation(15)])
+    transforms = torchvision.transforms.Compose([VideoGrayScaler(),
+                                             MinMaxScaler(0, 255),
+                                             torchvision.transforms.Normalize((0.184914231300354,), (0.11940956115722656,)),
+                                             # BamcPreprocessor(),
+                                             torchvision.transforms.Resize(size=(200, 350))
+                                            ])
+    augment_transform = torchvision.transforms.RandomRotation(15)
+    dataset = VideoClipLoaderBAMC(video_path, sparse_model=sparse_model, device=device, transform=transforms, frame_rate=20, num_frames=num_frames, augment_transform=augment_transform)
     
     targets = dataset.get_labels()
     

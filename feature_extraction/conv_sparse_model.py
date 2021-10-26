@@ -7,6 +7,9 @@ from torch.nn.functional import conv3d
 from torch.nn.functional import conv_transpose1d
 from torch.nn.functional import conv_transpose2d
 from torch.nn.functional import conv_transpose3d
+import scipy.io
+import numpy as np
+import os
 
 from utils.utils import ShiftedReLU
 
@@ -70,7 +73,7 @@ class ConvSparseLayer(nn.Module):
     def normalize_weights(self):
         with torch.no_grad():
             norms = torch.norm(self.filters.reshape(
-                self.out_channels, -1), dim=1, keepdim=True)
+                self.out_channels, self.in_channels, -1), dim=2, keepdim=True)
             norms = torch.max(norms, 1e-12*torch.ones_like(norms)).view(
                 (self.out_channels, self.in_channels) +
                 len(self.filters.shape[2:])*(1,)).expand(self.filters.shape)
@@ -137,8 +140,42 @@ class ConvSparseLayer(nn.Module):
                 u += self.activation_lr * du
                 if torch.norm(du) < 0.01:
                     break
+#             b1 = 0.9
+#             b2 = 0.999
+#             eps = 1e-8
+#             m = torch.zeros_like(u)
+#             v = torch.zeros_like(u)
+#             for i in range(self.max_activation_iter):
+#                 g = self.u_grad(u, images)
+#                 print(torch.sum(g))
+#                 m = b1 * m + (1-b1) * g
+#                 v = b2 * v + (1-b2) * g**2
+#                 mh = m / (1 - b1**(i+1))
+#                 vh = v / (1 - b2**(i+1))
+#                 u += self.activation_lr * mh / (torch.sqrt(vh) + eps)
 
         return self.threshold(u), u
 
     def forward(self, images, u_init):
         return self.activations(images, u_init)
+    
+    
+    def import_opencv_dir(self, in_dir):
+        i = 0
+        for f in sorted(os.listdir(in_dir), key=lambda x: str(x)):
+            if not f.endswith('.mat'):
+                continue
+            mat = scipy.io.loadmat(os.path.join(in_dir, f))
+
+            dic = torch.from_numpy((mat['weight_vals'].astype(np.float32)))
+
+            dic = dic.permute(2,1,0).unsqueeze(1)
+
+            dic = dic.float() /1
+
+            if self.filters.data[:,:,i,:,:].size() != dic.size():
+                raise Exception('Input dictionary size is: ' + str(dic.size()) + ' while model filter size is: ' + str(self.filters.data[:,:,i,:,:].size()))
+
+            self.filters.data[:,:,i,:,:] = dic
+
+            i += 1
