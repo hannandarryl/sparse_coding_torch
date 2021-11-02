@@ -74,6 +74,7 @@ class VideoLoader(Dataset):
         # print('length', len(video))
         if self.num_frames:
             video = video[-self.num_frames:]
+            video = np.stack([self.transform(f) for f in video], axis=0)
             
             if len(video) < self.num_frames:
                 padding = torch.zeros(self.num_frames - len(video), video.shape[1], video.shape[2], video.shape[3])
@@ -81,8 +82,8 @@ class VideoLoader(Dataset):
             
         video = video.swapaxes(0, 1).swapaxes(2, 3)
         
-        if self.transform:
-            video = self.transform(video)
+#         if self.transform:
+#             video = self.transform(video)
         
         self.cache[index] = (label, video)
             
@@ -156,7 +157,7 @@ class VideoClipLoader(Dataset):
     
 class VideoClipLoaderBAMC(Dataset):
     
-    def __init__(self, video_path, sparse_model, device, transform=None, frame_rate=20, num_frames=1, augment_transform=None):
+    def __init__(self, video_path, sparse_model=None, device=None, transform=None, frame_rate=20, num_frames=1, augment_transform=None):
         self.transform = transform
         self.augment_transform = augment_transform
         
@@ -189,11 +190,12 @@ class VideoClipLoaderBAMC(Dataset):
                     if self.transform:
                         clip = self.transform(clip)
                         
-                    with torch.no_grad():
-                        clip = clip.unsqueeze(0).to(device)
-                        u_init = torch.zeros([1, sparse_model.out_channels] + sparse_model.get_output_shape(clip))
-                        clip, _ = self.sparse_model(clip, u_init)
-                        clip = clip.squeeze(0).detach()
+                    if sparse_model:
+                        with torch.no_grad():
+                            clip = clip.unsqueeze(0).to(device)
+                            u_init = torch.zeros([1, sparse_model.out_channels] + sparse_model.get_output_shape(clip))
+                            clip, _ = self.sparse_model(clip, u_init)
+                            clip = clip.squeeze(0).detach()
 
                     self.clips.append((self.videos[vid_idx][0], clip, self.videos[vid_idx][1]))
                     self.video_idx.append(vid_idx)
@@ -223,6 +225,77 @@ class VideoClipLoaderBAMC(Dataset):
         
     def __len__(self):
         return len(self.clips)
+    
+class VideoFrameLoader(Dataset):
+    
+    def __init__(self, video_path, sparse_model=None, device=None, transform=None, num_frames=None):
+        self.num_frames = num_frames
+        self.transform = transform
+        
+        self.labels = [name for name in listdir(video_path) if isdir(join(video_path, name))]
+        self.videos = []
+        for label in self.labels:
+            self.videos.extend([(label, abspath(join(video_path, label, f)), f) for f in listdir(join(video_path, label)) if isfile(join(video_path, label, f))])
+            
+        self.sparse_model = sparse_model
+        self.device = device
+            
+        self.cache = {}
+        
+    def get_filenames(self):
+        return [self.videos[i][1].split('/')[-1].split('.')[0].lower().replace('_clean', '') for i in range(len(self.videos))]
+        
+    def get_labels(self):
+        return [self.videos[i][0] for i in range(len(self.videos))]
+    
+    def __getitem__(self, index):
+        #print('index: {}'.format(index))
+        
+        if index in self.cache:
+            return self.cache[index]
+        
+        label = self.videos[index][0]
+        filename = self.videos[index][2]
+        video, _, info = read_video(self.videos[index][1])
+        # print(info)
+        video = torch.swapaxes(video, 1, 3)
+        
+        # print('length', len(video))
+        if self.num_frames:
+            video = video[-self.num_frames:]
+            
+            if len(video) < self.num_frames:
+                padding = torch.zeros(self.num_frames - len(video), video.shape[1], video.shape[2], video.shape[3])
+                video = torch.cat((video, padding))
+            
+        video = video.swapaxes(0, 1).swapaxes(2, 3)
+        
+        if self.transform:
+            video = self.transform(video)
+            
+        if self.sparse_model:
+            with torch.no_grad():
+                video = video.swapaxes(0, 1).unsqueeze(1).to(self.device)
+                
+                new_vids = []
+                for i in range(0, len(video), 5):
+                    try:
+                        sub_vid = video[i:i+5]
+                    except IndexError:
+                        sub_vid = video[i:]
+                    u_init = torch.zeros([sub_vid.size(0), self.sparse_model.out_channels] + self.sparse_model.get_output_shape(sub_vid))
+                    sub_vid, _ = self.sparse_model(sub_vid, u_init)
+                    sub_vid = sub_vid.squeeze(2).detach()
+                    new_vids.append(sub_vid)
+                video = torch.cat(new_vids, dim=0).to('cpu')
+        
+        self.cache[index] = (label, video, filename)
+            
+        return label, video, filename
+        
+    def __len__(self):
+        return len(self.videos)
+
 
 if __name__ == "__main__":
     video_path = "/shared_data/bamc_data/"

@@ -26,17 +26,17 @@ class SmallDataClassifier(nn.Module):
             self.fc2 = nn.Linear(20, 10)
             self.fc3 = nn.Linear(10, 1)
         else:
-            self.compress_activations_conv_1 = nn.Conv3d(in_channels=64, out_channels=32, kernel_size=(1, 8, 8), stride=(1, 4, 4), padding=(1, 4, 4))
+            self.compress_activations_conv_1 = nn.Conv3d(in_channels=100, out_channels=64, kernel_size=(8, 8, 8), stride=(4, 4, 4), padding=(2, 4, 4))
 #             self.max_pool_1 = nn.MaxPool3d(kernel_size=(1, 4, 4))
-#             self.compress_activations_conv_2 = nn.Conv3d(in_channels=64, out_channels=64, kernel_size=(1, 8, 8), stride=(1, 2, 2), padding=(1, 4, 4))
+            self.compress_activations_conv_2 = nn.Conv3d(in_channels=64, out_channels=32, kernel_size=(1, 8, 8), stride=(1, 2, 2), padding=(1, 4, 4))
 #             self.max_pool_2 = nn.MaxPool3d(kernel_size=(1, 4, 4))
-#             self.compress_activations_conv_3 = nn.Conv3d(in_channels=64, out_channels=64, kernel_size=(1, 4, 4), stride=(1, 2, 2), padding=(1, 2, 2))
+            self.compress_activations_conv_3 = nn.Conv3d(in_channels=32, out_channels=16, kernel_size=(1, 4, 4), stride=(1, 2, 2), padding=(1, 2, 2))
 #             self.max_pool_3 = nn.MaxPool3d(kernel_size=(1, 4, 4))
-#             self.compress_activations_ff = nn.Linear(729, 100)
+            self.compress_activations_ff = nn.Linear(4576, 100)
 
     #         self.compress_time = nn.Conv3d(in_channels=24, out_channels=24, kernel_size=(14, 1, 1), stride=(1, 1, 1), padding=0)
 #             self.compress_time = nn.MaxPool3d(kernel_size=(14, 1, 1), stride=(1, 1, 1), padding=0)
-    #         self.compress_time = nn.GRU(input_size=14, hidden_size=1)
+            self.compress_time = nn.GRU(input_size=100, hidden_size=100)
     #         self.compress_time = nn.MaxPool2d(kernel_size=(14, 1), stride=1, padding=0)
     #         self.compress_time = nn.Linear(14, 10)
 
@@ -46,10 +46,10 @@ class SmallDataClassifier(nn.Module):
 #                                         requires_grad=True)
 
             # First fully connected layer
-            self.fc1 = nn.Linear(379008, 1000)
+#             self.fc1 = nn.Linear(729, 100)
     # #         self.fc1 = nn.Linear(73008, 128)
     #         self.relu = nn.ReLU()
-            self.fc2 = nn.Linear(1000, 100)
+#             self.fc2 = nn.Linear(1000, 100)
             self.fc3 = nn.Linear(100, 20)
             self.fc4 = nn.Linear(20, 1)
 
@@ -66,16 +66,19 @@ class SmallDataClassifier(nn.Module):
             return x, activations, u
         else:
         
-            batch_size, channel_size, time_size, width_size, height_size = activations.size()
+            batch_size, time_size, channel_size, height_size, width_size = activations.size()
+            
+            activations = activations.view(batch_size, channel_size, time_size, height_size, width_size)
 
 #             x = torch.zeros_like(activations)
 
 #             for i in range(channel_size):
 #                 x[:, i, :, :, :] = activations[:, i, :, :, :] * self.feature_weights[i]
 
-            x = F.relu(self.compress_activations_conv_1(activations))#.view(batch_size, channel_size, time_size,-1)
-#             x = F.relu(self.compress_activations_conv_2(x))
-#             x = F.relu(self.compress_activations_conv_3(x))
+            x = F.relu(self.compress_activations_conv_1(activations))#.view(time_size, batch_size, -1)
+            x = F.relu(self.compress_activations_conv_2(x))
+            x = F.relu(self.compress_activations_conv_3(x)).view(batch_size, 19, -1)
+            x = F.relu(self.compress_activations_ff(x)).permute(1, 0, 2)
 
 #             x = F.relu(self.compress_time(x))
 
@@ -84,13 +87,12 @@ class SmallDataClassifier(nn.Module):
     #         x = self.fc1(x)
 
 #             x = F.relu(self.compress_features(x))
-    #         x, _ = self.compress_time(x)
-    #         x = x.squeeze(2)
+            x, _ = self.compress_time(x)
+            x = x[-1]
+            x = x.view(batch_size, -1)
 
-            x = torch.flatten(x, 1)
-
-            x = F.relu(self.fc1(x))
-            x = F.relu(self.fc2(x))
+#             x = F.relu(self.fc1(x))
+#             x = F.relu(self.fc2(x))
             x = F.relu(self.fc3(x))
             x = self.fc4(x)
 
@@ -120,8 +122,8 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', default=12, type=int)
     parser.add_argument('--kernel_height', default=16, type=int)
     parser.add_argument('--kernel_width', default=16, type=int)
-    parser.add_argument('--kernel_depth', default=4, type=int)
-    parser.add_argument('--num_kernels', default=64, type=int)
+    parser.add_argument('--kernel_depth', default=1, type=int)
+    parser.add_argument('--num_kernels', default=100, type=int)
     parser.add_argument('--stride', default=1, type=int)
     parser.add_argument('--max_activation_iter', default=75, type=int)
     parser.add_argument('--activation_lr', default=1e-2, type=float)
@@ -172,18 +174,19 @@ if __name__ == "__main__":
                                    activation_lr=args.activation_lr)
     if args.sparse_checkpoint:
         sparse_param = torch.load(args.sparse_checkpoint)
+        sparse_param['model_state_dict']['filters'] = sparse_param['model_state_dict']['module.filters']
+        del sparse_param['model_state_dict']['module.filters']
         frozen_sparse.load_state_dict(sparse_param['model_state_dict'])
 
 #         frozen_sparse.import_opencv_dir('/home/dwh48@drexel.edu/sparse_coding_torch/eds_weights')
 
     frozen_sparse.to(device)
     
-    splits, dataset = load_bamc_clips(batch_size, 0.8, sparse_model=frozen_sparse, device=device, num_frames=args.kernel_depth, seed=args.seed)
+#     splits, dataset = load_bamc_clips(batch_size, None, sparse_model=frozen_sparse, device=device, num_frames=args.kernel_depth, seed=args.seed)
+    splits, dataset = load_bamc_data(batch_size, 0.8, sparse_model=frozen_sparse, device=device, seed=args.seed)
     
     overall_true = []
     overall_pred = []
-    fn_ids = []
-    fp_ids = []
     
     i_fold = 0
     for train_idx, test_idx in splits:
@@ -370,18 +373,12 @@ if __name__ == "__main__":
             
             vid_acc = []
             for k in pred_dict.keys():
-                gt_mode = torch.mode(gt_dict[k])[0]
-                pred_mode = torch.mode(pred_dict[k])[0]
-                overall_true.append(gt_mode)
-                overall_pred.append(pred_mode)
-                if pred_mode == gt_mode:
+                overall_true.append(torch.mode(gt_dict[k])[0])
+                overall_pred.append(torch.mode(pred_dict[k])[0])
+                if torch.mode(pred_dict[k])[0] == torch.mode(gt_dict[k])[0]:
                     vid_acc.append(1)
                 else:
                     vid_acc.append(0)
-                    if pred_mode == 0:
-                        fn_ids.append(k)
-                    else:
-                        fp_ids.append(k)
                     
             vid_acc = np.array(vid_acc)
             
@@ -408,13 +405,6 @@ if __name__ == "__main__":
 #                 torch.cuda.empty_cache()
             
         i_fold = i_fold + 1
-                              
-    fp_fn_file = os.path.join(args.output_dir, 'fp_fn.txt')
-    with open(fp_fn_file, 'w+') as in_f:
-        in_f.write('FP:\n')
-        in_f.write(str(fp_ids) + '\n\n')
-        in_f.write('FN:\n')
-        in_f.write(str(fn_ids) + '\n\n')
         
     overall_true = np.array(overall_true)
     overall_pred = np.array(overall_pred)

@@ -5,7 +5,7 @@ from torch.nn import Conv1d, Conv2d, Conv3d
 from torch.nn import ConvTranspose1d, ConvTranspose2d, ConvTranspose3d
 import torch.nn.functional as F
 
-from utils import ShiftedReLU
+from utils.utils import ShiftedReLU
 
 
 class ConvLayer(nn.Module):

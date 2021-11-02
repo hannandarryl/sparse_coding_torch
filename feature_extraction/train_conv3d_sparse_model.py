@@ -102,9 +102,9 @@ if __name__ == "__main__":
     parser.add_argument('--kernel_height', default=16, type=int)
     parser.add_argument('--kernel_width', default=16, type=int)
     parser.add_argument('--kernel_depth', default=8, type=int)
-    parser.add_argument('--num_kernels', default=128, type=int)
-    parser.add_argument('--stride', default=4, type=int)
-    parser.add_argument('--max_activation_iter', default=1000, type=int)
+    parser.add_argument('--num_kernels', default=32, type=int)
+    parser.add_argument('--stride', default=1, type=int)
+    parser.add_argument('--max_activation_iter', default=200, type=int)
     parser.add_argument('--activation_lr', default=1e-4, type=float)
     parser.add_argument('--lr', default=1e-3, type=float)
     parser.add_argument('--epochs', default=300, type=int)
@@ -129,7 +129,7 @@ if __name__ == "__main__":
         batch_size = args.batch_size
 
     if args.use_clips:
-        train_loader, test_loader = load_bamc_clips(batch_size, 1.0, num_frames=8, seed=args.seed)
+        train_loader, test_loader = load_bamc_clips(batch_size, 1.0, sparse_model=None, device=None, num_frames=8, seed=args.seed)
     else:
         train_loader, test_loader = load_bamc_data(batch_size, 1.0, args.seed)
     print('Loaded', len(train_loader), 'train examples')

@@ -1,10 +1,10 @@
 import numpy as np
 import torchvision
 import torch
-from sklearn.model_selection import train_test_split, GroupShuffleSplit
+from sklearn.model_selection import train_test_split, GroupShuffleSplit, LeaveOneGroupOut, LeaveOneOut, StratifiedGroupKFold, StratifiedKFold
 from utils.video_loader import MinMaxScaler, VideoGrayScaler
 from utils.video_loader import VideoLoader
-from utils.video_loader import VideoClipLoader, VideoClipLoaderBAMC
+from utils.video_loader import VideoClipLoader, VideoClipLoaderBAMC, VideoFrameLoader
 import csv
 
 def load_balls_data(batch_size):
@@ -19,7 +19,7 @@ def load_balls_data(batch_size):
 
     return train_loader
 
-def load_bamc_data(batch_size, train_ratio, seed=None):   
+def load_bamc_data(batch_size, train_ratio, sparse_model=None, device=None, seed=None):   
     video_path = "/shared_data/bamc_data_scale_cropped/"
     
     scale = 0.2
@@ -43,11 +43,22 @@ def load_bamc_data(batch_size, train_ratio, seed=None):
             video_to_participant[key] = row['Participant_id']
             
     
+#     transforms = torchvision.transforms.Compose([VideoGrayScaler(),
+#                                                  torchvision.transforms.Resize(size=(width, height)), 
+#                                                  MinMaxScaler(0, 255),
+#                                                 torchvision.transforms.RandomRotation(15)])
+#     transforms = torchvision.transforms.Compose([torchvision.transforms.Resize(size=(width, height)), MinMaxScaler(0, 255), torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), torchvision.transforms.RandomRotation(15)])
     transforms = torchvision.transforms.Compose([VideoGrayScaler(),
-                                                 torchvision.transforms.Resize(size=(width, height)), 
-                                                 MinMaxScaler(0, 255),
-                                                torchvision.transforms.RandomRotation(15)])
-    dataset = VideoLoader(video_path, transform=transforms, num_frames=60)
+
+                                             MinMaxScaler(0, 255),
+
+                                             torchvision.transforms.Normalize((0.184914231300354,), (0.11940956115722656,)),
+
+                                             torchvision.transforms.Resize(size=(200, 350))
+
+                                            ])
+    
+    dataset = VideoFrameLoader(video_path, sparse_model=sparse_model, device=device, transform=transforms, num_frames=60)
     
     targets = dataset.get_labels()
     
@@ -59,24 +70,29 @@ def load_bamc_data(batch_size, train_ratio, seed=None):
                                                sampler=train_sampler)
         test_loader = None
     else:
-        gss = GroupShuffleSplit(n_splits=1, train_size=train_ratio, random_state=seed)
+        gss = StratifiedGroupKFold(n_splits=5)#, train_size=train_ratio, random_state=seed)
 
         groups = [video_to_participant[v] for v in dataset.get_filenames()]
+        
+        return gss.split(np.arange(len(targets)), targets, groups), dataset
+#         gss = GroupShuffleSplit(n_splits=1, train_size=train_ratio, random_state=seed)
 
-        train_idx, test_idx = next(gss.split(np.arange(len(targets)), targets, groups))
+#         groups = [video_to_participant[v] for v in dataset.get_filenames()]
 
-    #     train_idx, test_idx = train_test_split(np.arange(len(targets)), test_size=0.2, shuffle=True, stratify=targets)
+#         train_idx, test_idx = next(gss.split(np.arange(len(targets)), targets, groups))
 
-        train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
-        test_sampler = torch.utils.data.SubsetRandomSampler(test_idx)
+#     #     train_idx, test_idx = train_test_split(np.arange(len(targets)), test_size=0.2, shuffle=True, stratify=targets)
 
-        train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                                   # shuffle=True,
-                                                   sampler=train_sampler)
+#         train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
+#         test_sampler = torch.utils.data.SubsetRandomSampler(test_idx)
 
-        test_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                                        # shuffle=True,
-                                                        sampler=test_sampler)
+#         train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+#                                                    # shuffle=True,
+#                                                    sampler=train_sampler)
+
+#         test_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+#                                                         # shuffle=True,
+#                                                         sampler=test_sampler)
 
     return train_loader, test_loader
 
@@ -164,7 +180,16 @@ def load_bamc_clips(batch_size, train_ratio, sparse_model, device, num_frames=1,
     
     targets = dataset.get_labels()
     
-    if train_ratio == 1.0:
+    if train_ratio is None:
+        gss = LeaveOneGroupOut()
+
+        groups = [v for v in dataset.get_filenames()]
+        
+        return gss.split(np.arange(len(targets)), targets, groups), dataset
+#         gss = LeaveOneOut()
+        
+#         return gss.split(np.arange(len(targets)), targets), dataset
+    elif train_ratio == 1.0:
         train_idx = np.arange(len(targets))
         train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
@@ -172,23 +197,28 @@ def load_bamc_clips(batch_size, train_ratio, sparse_model, device, num_frames=1,
                                                sampler=train_sampler)
         test_loader = None
     else:
-        gss = GroupShuffleSplit(n_splits=1, train_size=train_ratio, random_state=seed)
+        gss = StratifiedGroupKFold(n_splits=5)#, train_size=train_ratio, random_state=seed)
 
         groups = [video_to_participant[v] for v in dataset.get_filenames()]
+        
+        return gss.split(np.arange(len(targets)), targets, groups), dataset
+#           gss = StratifiedKFold(n_splits=5)#, train_size=train_ratio, random_state=seed)
+        
+#           return gss.split(np.arange(len(targets)), targets), dataset
 
-        train_idx, test_idx = next(gss.split(np.arange(len(targets)), targets, groups))
+#         train_idx, test_idx = next(gss.split(np.arange(len(targets)), targets, groups))
 
-    #     train_idx, test_idx = train_test_split(np.arange(len(targets)), test_size=0.2, shuffle=True, stratify=targets)
+#     #     train_idx, test_idx = train_test_split(np.arange(len(targets)), test_size=0.2, shuffle=True, stratify=targets)
 
-        train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
-        test_sampler = torch.utils.data.SubsetRandomSampler(test_idx)
+#         train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
+#         test_sampler = torch.utils.data.SubsetRandomSampler(test_idx)
 
-        train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                                   # shuffle=True,
-                                                   sampler=train_sampler)
+#         train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+#                                                    # shuffle=True,
+#                                                    sampler=train_sampler)
 
-        test_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                                        # shuffle=True,
-                                                        sampler=test_sampler)
+#         test_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+#                                                         # shuffle=True,
+#                                                         sampler=test_sampler)
 
     return train_loader, test_loader

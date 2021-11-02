@@ -4,49 +4,48 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import argparse
 import os
-from load_data import load_bamc_data, load_covid_data
-from conv_model import ConvLayer
+from utils.load_data import load_bamc_data, load_covid_data, load_bamc_clips
+from feature_extraction.conv_model import ConvLayer
 import time
 import numpy as np
+from sklearn.metrics import f1_score, accuracy_score
     
 class SmallDataClassifier(nn.Module):
     
-    def __init__(self, pretrained_cnn, out_size):
+    def __init__(self, pretrained_cnn):
         super().__init__()
 
         self.pretrained_cnn = pretrained_cnn
-
-        self.dropout = torch.nn.Dropout(p=0.5, inplace=False)
         
-#         self.compress_activations = nn.Conv3d(in_channels=32, out_channels=8, kernel_size=(1, 10, 10), stride=(1, 4, 4), padding=(0, 0, 0))
+        self.compress_activations = nn.Conv3d(in_channels=64, out_channels=24, kernel_size=(1, 8, 8), stride=(1, 4, 4), padding=(1, 2, 2))
         
 #         self.compress_time = nn.Conv3d(in_channels=27, out_channels=4, kernel_size=1, stride=1, padding=0)
         
         # First fully connected layer
-        self.fc1 = nn.Linear(207936, 128)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(128, out_size)
+        self.fc1 = nn.Linear(641424, 1000)
+    # #         self.fc1 = nn.Linear(73008, 128)
+    #         self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(1000, 100)
+        self.fc3 = nn.Linear(100, 20)
+        self.fc4 = nn.Linear(20, 1)
 
     # x represents our data
     def forward(self, x):
         # Pass data through conv1
-        activations = self.pretrained_cnn.get_activations(x)
+        activations = F.relu(self.pretrained_cnn.get_activations(x))
         
-#         x = self.compress_activations(activations).permute(0, 2, 1, 3, 4)
+        x = F.relu(self.compress_activations(activations))
 #         x = self.compress_time(activations.permute(0, 2, 1, 3, 4))
         
         # x = self.dropout3d(x)
         
         # Flatten x with start_dim=1
-        x = torch.flatten(activations, 1)
-        
-        # print(x.shape)
-        
-        # Pass data through fc1
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-        x = self.fc2(x)
+        x = torch.flatten(x, 1)
+
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = self.fc4(x)
 
         return x
     
@@ -56,13 +55,13 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', default=12, type=int)
     parser.add_argument('--kernel_height', default=16, type=int)
     parser.add_argument('--kernel_width', default=16, type=int)
-    parser.add_argument('--kernel_depth', default=8, type=int)
-    parser.add_argument('--num_kernels', default=32, type=int)
-    parser.add_argument('--stride', default=2, type=int)
+    parser.add_argument('--kernel_depth', default=4, type=int)
+    parser.add_argument('--num_kernels', default=64, type=int)
+    parser.add_argument('--stride', default=1, type=int)
     parser.add_argument('--lr', default=3e-3, type=float)
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--output_dir', default='./output', type=str)
-    parser.add_argument('--checkpoint', required=True, type=str)
+#     parser.add_argument('--checkpoint', required=True, type=str)
     parser.add_argument('--num_folds', default=1, type=int)
     
     args = parser.parse_args()
@@ -82,12 +81,22 @@ if __name__ == "__main__":
 
     all_errors = []
     
-    for i_fold in range(args.num_folds):
-        train_loader, test_loader = load_covid_data(batch_size, train_ratio=0.8)
-        print('Loaded', len(train_loader), 'train examples')
-        print('Loaded', len(test_loader), 'test examples')
+    splits, dataset = load_bamc_clips(batch_size, 0.8, sparse_model=None, device=None, num_frames=args.kernel_depth, seed=42)
+    
+    i_fold = 0
+    for train_idx, test_idx in splits:
+        
+        train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
+        test_sampler = torch.utils.data.SubsetRandomSampler(test_idx)
 
-        example_data = next(iter(train_loader))
+        train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+                                                   # shuffle=True,
+                                                   sampler=train_sampler)
+
+        test_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+                                                        # shuffle=True,
+                                                        sampler=test_sampler)
+
         
         best_so_far = float('inf')
 
@@ -97,32 +106,27 @@ if __name__ == "__main__":
                                stride=args.stride,
                                padding=0,
                                convo_dim=3)
-        param = torch.load(args.checkpoint)
-        frozen.load_state_dict(param['model_state_dict'])
 
-        for param in frozen.parameters():
-            param.requires_grad = False
-
-        predictive_model = torch.nn.DataParallel(SmallDataClassifier(frozen, train_loader.dataset.label_vocab_size()), device_ids=[0,1,2,3])
+        predictive_model = torch.nn.DataParallel(SmallDataClassifier(frozen))
         predictive_model.to(device)
 
         prediction_optimizer = torch.optim.Adam(predictive_model.parameters(),
                                                 lr=args.lr)
-
-        criterion = torch.nn.CrossEntropyLoss()
         
-        predictive_model.train()
+        criterion = torch.nn.BCEWithLogitsLoss()
+
         for epoch in range(args.epochs):
+            predictive_model.train()
             epoch_loss = 0
             # for local_batch in train_loader:
             t1 = time.perf_counter()
 
-            for labels, local_batch in tqdm(train_loader):
+            for labels, local_batch, vid_f in tqdm(train_loader):
                 local_batch = local_batch.to(device)
 
-#                 torch_labels = torch.zeros(len(labels))
-#                 torch_labels[[i for i in range(len(labels)) if labels[i] == 'No_Sliding']] = 1
-                torch_labels = torch.tensor(labels, device=device)
+                torch_labels = torch.zeros(len(labels))
+                torch_labels[[i for i in range(len(labels)) if labels[i] == 'PTX_No_Sliding']] = 1
+                torch_labels = torch_labels.unsqueeze(1).to(device)
    
                 pred = predictive_model(local_batch)
 
@@ -133,40 +137,19 @@ if __name__ == "__main__":
                 prediction_optimizer.zero_grad()
                 loss.backward()
                 prediction_optimizer.step()
-            
-            predictive_model.eval()
-            with torch.no_grad():
-                error = None
-
-                # for local_batch in train_loader:
-                for labels, local_batch in test_loader:
-                    local_batch = local_batch.to(device)
-
-                    torch_labels = torch.tensor(labels, device=device)
-
-                    pred = predictive_model(local_batch)
-                    
-                    tmp_error = ((torch_labels != torch.argmax(torch.nn.Softmax()(pred)))).to(torch.float).flatten()
-
-                    if error is None:
-                        error = tmp_error
-                    else:
-                        error = torch.cat((error, tmp_error))
-
-                t2 = time.perf_counter()
                 
-                mean_error = error.mean().cpu().numpy()
+            t2 = time.perf_counter()
 
-                print('fold={}, epoch={}, time={:.2f}, loss={:.2f}, error={:.2f}'.format(i_fold, epoch, t2-t1, epoch_loss, mean_error))
+            print('fold={}, epoch={}, time={:.2f}, loss={:.2f}'.format(i_fold, epoch, t2-t1, epoch_loss))
             
-            if mean_error < best_so_far:
+            if epoch_loss <= best_so_far:
                 print("found better model")
                 # Save model parameters
                 torch.save({
                     'model_state_dict': predictive_model.module.state_dict(),
                     'optimizer_state_dict': prediction_optimizer.state_dict(),
                 }, os.path.join(output_dir, "model-best.pt"))
-                best_so_far = mean_error
+                best_so_far = epoch_loss
                 
         checkpoint = torch.load(os.path.join(output_dir, "model-best.pt"))
         predictive_model.module.load_state_dict(checkpoint['model_state_dict'])
@@ -175,38 +158,80 @@ if __name__ == "__main__":
         with torch.no_grad():
             epoch_loss = 0
 
-            y_h = None
-            y = None
+            y_true = None
+            y_pred = None
+            
+            pred_dict = {}
+            gt_dict = {}
 
-            error = None
+#             u_init = torch.zeros([batch_size, frozen_sparse.out_channels] +
+#                         frozen_sparse.get_output_shape(example_data[1]))
 
             t1 = time.perf_counter()
             # for local_batch in train_loader:
-            for labels, local_batch in test_loader:
+            for labels, local_batch, vid_f in test_loader:
+#                 if u_init.size(0) != local_batch.size(0):
+#                     u_init = torch.zeros([local_batch.size(0), frozen_sparse.out_channels] +
+#                         frozen_sparse.get_output_shape(example_data[1]))
 
                 local_batch = local_batch.to(device)
 
-                torch_labels = torch.tensor(labels, device=device)
+                torch_labels = torch.zeros(len(labels))
+                torch_labels[[i for i in range(len(labels)) if labels[i] == 'PTX_No_Sliding']] = 1
+                torch_labels = torch_labels.unsqueeze(1).to(device)
 
-                pred = predictive_model(local_batch)
+
+                pred = predictive_model(local_batch)#, u_init)
 
                 loss = criterion(pred, torch_labels)
                 epoch_loss += loss.item() * local_batch.size(0)
+                
+                for i, v_f in enumerate(vid_f):
+                    if v_f not in pred_dict:
+                        pred_dict[v_f] = torch.nn.Sigmoid()(pred[i]).round().detach().cpu().flatten().to(torch.long)
+                    else:
+                        pred_dict[v_f] = torch.cat((pred_dict[v_f], torch.nn.Sigmoid()(pred[i]).detach().round().cpu().flatten().to(torch.long)))
+                        
+                    if v_f not in gt_dict:
+                        gt_dict[v_f] = torch_labels[i].detach().cpu().flatten().to(torch.long)
+                    else:
+                        gt_dict[v_f] = torch.cat((gt_dict[v_f], torch_labels[i].detach().cpu().flatten().to(torch.long)))
 
-                tmp_error = ((torch_labels != torch.argmax(torch.nn.Softmax()(pred)))).to(torch.float).flatten()
-
-                if error is None:
-                    error = tmp_error
+                if y_true is None:
+                    y_true = torch_labels.detach().cpu().flatten().to(torch.long)
+                    y_pred = torch.nn.Sigmoid()(pred).round().detach().cpu().flatten().to(torch.long)
                 else:
-                    error = torch.cat((error, tmp_error))
+                    y_true = torch.cat((y_true, torch_labels.detach().cpu().flatten().to(torch.long)))
+                    y_pred = torch.cat((y_pred, torch.nn.Sigmoid()(pred).detach().round().cpu().flatten().to(torch.long)))
 
             t2 = time.perf_counter()
+            
+            vid_acc = []
+            for k in pred_dict.keys():
+                if torch.mode(pred_dict[k])[0] == torch.mode(gt_dict[k])[0]:
+                    vid_acc.append(1)
+                else:
+                    vid_acc.append(0)
+                    
+            vid_acc = np.array(vid_acc)
+            
+            print('----------------------------------------------------------------------------')
+            for k in pred_dict.keys():
+                print(k)
+                print('Predictions:')
+                print(pred_dict[k])
+                print('Ground Truth:')
+                print(gt_dict[k])
+                print('----------------------------------------------------------------------------')
 
             print('fold={}, loss={:.2f}, time={:.2f}'.format(i_fold, loss, t2-t1))
             
-            mean_error = error.mean().cpu().numpy()
-            all_errors.append(mean_error)
+            f1 = f1_score(y_true, y_pred, average='macro')
+            accuracy = accuracy_score(y_true, y_pred)
+            all_errors.append(np.sum(vid_acc) / len(vid_acc))
 
-            print("Test error={:.2f}, fold={}".format(mean_error, i_fold))
+            print("Test f1={:.2f}, clip_acc={:.2f}, vid_acc={:.2f} fold={}".format(f1, accuracy, np.sum(vid_acc) / len(vid_acc), i_fold))
+            
+            i_fold += 1
             
     print("Final error={:.2f}".format(np.array(all_errors).mean()))

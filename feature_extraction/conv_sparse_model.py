@@ -133,26 +133,25 @@ class ConvSparseLayer(nn.Module):
 #             u = torch.full([images.shape[0], self.out_channels] +
 #                     output_shape, fill_value=self.lam, device=self.filters.device)
             u = u_init.detach().clone().to(self.filters.device)
-            for i in range(self.max_activation_iter):
-                du = self.u_grad(u, images)
-#                 print(torch.sum(du))
-                # print("grad_norm={}, iter={}".format(torch.norm(du), i))
-                u += self.activation_lr * du
-                if torch.norm(du) < 0.01:
-                    break
-#             b1 = 0.9
-#             b2 = 0.999
-#             eps = 1e-8
-#             m = torch.zeros_like(u)
-#             v = torch.zeros_like(u)
 #             for i in range(self.max_activation_iter):
-#                 g = self.u_grad(u, images)
-#                 print(torch.sum(g))
-#                 m = b1 * m + (1-b1) * g
-#                 v = b2 * v + (1-b2) * g**2
-#                 mh = m / (1 - b1**(i+1))
-#                 vh = v / (1 - b2**(i+1))
-#                 u += self.activation_lr * mh / (torch.sqrt(vh) + eps)
+#                 du = self.u_grad(u, images)
+# #                 print(torch.sum(du))
+#                 # print("grad_norm={}, iter={}".format(torch.norm(du), i))
+#                 u += self.activation_lr * du
+#                 if torch.norm(du) < 0.01:
+#                     break
+            b1 = 0.9
+            b2 = 0.999
+            eps = 1e-8
+            m = torch.zeros_like(u)
+            v = torch.zeros_like(u)
+            for i in range(self.max_activation_iter):
+                g = self.u_grad(u, images)
+                m = b1 * m + (1-b1) * g
+                v = b2 * v + (1-b2) * g**2
+                mh = m / (1 - b1**(i+1))
+                vh = v / (1 - b2**(i+1))
+                u += self.activation_lr * mh / (torch.sqrt(vh) + eps)
 
         return self.threshold(u), u
 
