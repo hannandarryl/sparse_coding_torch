@@ -310,10 +310,10 @@ if __name__ == "__main__":
                     torch.save({
                         'model_state_dict': predictive_model.state_dict(),
                         'optimizer_state_dict': prediction_optimizer.state_dict(),
-                    }, os.path.join(output_dir, "model-best.pt"))
+                    }, os.path.join(output_dir, "model-best_fold_" + str(i_fold) + ".pt"))
                     best_so_far = accuracy
 
-            checkpoint = torch.load(os.path.join(output_dir, "model-best.pt"))
+            checkpoint = torch.load(os.path.join(output_dir, "model-best_fold_" + str(i_fold) + ".pt"))
             predictive_model.load_state_dict(checkpoint['model_state_dict'])
 
         predictive_model.eval()
@@ -370,8 +370,20 @@ if __name__ == "__main__":
             
             vid_acc = []
             for k in pred_dict.keys():
-                gt_mode = torch.mode(gt_dict[k])[0]
-                pred_mode = torch.mode(pred_dict[k])[0]
+                gt_mode = torch.mode(gt_dict[k])[0].item()
+                pred_mode = torch.mode(pred_dict[k])[0].item()
+#                 pred_mode = 1
+#                 contiguous_zeros = 0
+#                 best_num = 0
+#                 for val in pred_dict[k]:
+#                     if val.item() == 0:
+#                         contiguous_zeros += 1
+#                     else:
+#                         if contiguous_zeros > best_num:
+#                             best_num = contiguous_zeros
+#                             contiguous_zeros = 0
+#                 if best_num >= 4 or contiguous_zeros >= 4:
+#                     pred_mode = 0
                 overall_true.append(gt_mode)
                 overall_pred.append(pred_mode)
                 if pred_mode == gt_mode:
@@ -392,6 +404,20 @@ if __name__ == "__main__":
                 print(pred_dict[k])
                 print('Ground Truth:')
                 print(gt_dict[k])
+                print('Overall Prediction:')
+                pred_mode = 1
+                contiguous_zeros = 0
+                best_num = 0
+                for val in pred_dict[k]:
+                    if val.item() == 0:
+                        contiguous_zeros += 1
+                    else:
+                        if contiguous_zeros > best_num:
+                            best_num = contiguous_zeros
+                            contiguous_zeros = 0
+                if best_num >= 4 or contiguous_zeros >= 4:
+                    pred_mode = 0
+                print(pred_mode)
                 print('----------------------------------------------------------------------------')
 
             print('fold={}, loss={:.2f}, time={:.2f}'.format(i_fold, loss, t2-t1))
