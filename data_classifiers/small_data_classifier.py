@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import argparse
 import os
-from utils.load_data import load_bamc_data, load_bamc_clips
+from utils.load_data import load_bamc_data, load_bamc_clips, load_yolo_clips
 from feature_extraction.conv_sparse_model import ConvSparseLayer
 import time
 import numpy as np
@@ -14,117 +14,150 @@ from data_classifiers.pca import PCASparseActivations
     
 class SmallDataClassifier(nn.Module):
     
-    def __init__(self, sparse_layer, pca=None):
+    def __init__(self):
         super().__init__()
 
-#         self.sparse_layer = sparse_layer
-        self.pca = pca
+        self.compress_activations_conv_1 = nn.Conv3d(in_channels=64, out_channels=32, kernel_size=(1, 8, 8), stride=(1, 4, 4), padding=(1, 4, 4))
+        self.compress_activations_conv_2 = nn.Conv3d(in_channels=32, out_channels=16, kernel_size=(1, 8, 8), stride=(1, 4, 4), padding=(1, 4, 4))
 
-#         self.dropout = torch.nn.Dropout(p=0.5, inplace=False)
-        if self.pca:
-            self.fc1 = nn.Linear(40, 20)
-            self.fc2 = nn.Linear(20, 10)
-            self.fc3 = nn.Linear(10, 1)
-        else:
-            self.compress_activations_conv_1 = nn.Conv3d(in_channels=64, out_channels=32, kernel_size=(1, 8, 8), stride=(1, 4, 4), padding=(1, 4, 4))
-#             self.max_pool_1 = nn.MaxPool3d(kernel_size=(1, 4, 4))
-#             self.compress_activations_conv_2 = nn.Conv3d(in_channels=64, out_channels=64, kernel_size=(1, 8, 8), stride=(1, 2, 2), padding=(1, 4, 4))
-#             self.max_pool_2 = nn.MaxPool3d(kernel_size=(1, 4, 4))
-#             self.compress_activations_conv_3 = nn.Conv3d(in_channels=64, out_channels=64, kernel_size=(1, 4, 4), stride=(1, 2, 2), padding=(1, 2, 2))
-#             self.max_pool_3 = nn.MaxPool3d(kernel_size=(1, 4, 4))
-#             self.compress_activations_ff = nn.Linear(729, 100)
-
-    #         self.compress_time = nn.Conv3d(in_channels=24, out_channels=24, kernel_size=(14, 1, 1), stride=(1, 1, 1), padding=0)
-#             self.compress_time = nn.MaxPool3d(kernel_size=(14, 1, 1), stride=(1, 1, 1), padding=0)
-    #         self.compress_time = nn.GRU(input_size=14, hidden_size=1)
-    #         self.compress_time = nn.MaxPool2d(kernel_size=(14, 1), stride=1, padding=0)
-    #         self.compress_time = nn.Linear(14, 10)
-
-#             self.compress_features = nn.Linear(48, 10)
-
-#             self.feature_weights = nn.Parameter(torch.rand(48),
-#                                         requires_grad=True)
-
-            # First fully connected layer
-            self.fc1 = nn.Linear(379008, 1000)
-    # #         self.fc1 = nn.Linear(73008, 128)
-    #         self.relu = nn.ReLU()
-            self.fc2 = nn.Linear(1000, 100)
-            self.fc3 = nn.Linear(100, 20)
-            self.fc4 = nn.Linear(20, 1)
+        self.dropout = torch.nn.Dropout(p=0.5)
+        
+        # First fully connected layer
+        self.fc1 = nn.Linear(7280, 1000)
+        self.fc2 = nn.Linear(1000, 100)
+        self.fc3 = nn.Linear(100, 20)
+        self.fc4 = nn.Linear(20, 1)
 
     # x represents our data
     def forward(self, activations):
-        # Pass data through conv1
-#         activations, u = self.sparse_layer(x, u_init)
-        
-        if self.pca:
-            x = pca.get_components(activations)
-            x = F.relu(self.fc1(x)).squeeze(-1)
-            x = F.relu(self.fc2(x)).squeeze(-1)
-            x = self.fc3(x).squeeze(-1)
-            return x, activations, u
-        else:
-        
-            batch_size, channel_size, time_size, width_size, height_size = activations.size()
+        batch_size, channel_size, time_size, height_size, width_size = activations.size()
 
-#             x = torch.zeros_like(activations)
+        x = F.relu(self.compress_activations_conv_1(activations))
+        x = F.relu(self.compress_activations_conv_2(x))
 
-#             for i in range(channel_size):
-#                 x[:, i, :, :, :] = activations[:, i, :, :, :] * self.feature_weights[i]
+        x = torch.flatten(x, 1)
 
-            x = F.relu(self.compress_activations_conv_1(activations))#.view(batch_size, channel_size, time_size,-1)
-#             x = F.relu(self.compress_activations_conv_2(x))
-#             x = F.relu(self.compress_activations_conv_3(x))
-
-#             x = F.relu(self.compress_time(x))
-
-    #         x = torch.flatten(x, 1)
-
-    #         x = self.fc1(x)
-
-#             x = F.relu(self.compress_features(x))
-    #         x, _ = self.compress_time(x)
-    #         x = x.squeeze(2)
-
-            x = torch.flatten(x, 1)
-
-            x = F.relu(self.fc1(x))
-            x = F.relu(self.fc2(x))
-            x = F.relu(self.fc3(x))
-            x = self.fc4(x)
-
-            # x = self.dropout3d(x)
-
-            # Flatten x with start_dim=1
-    #         x = torch.flatten(x, 1)
-
-            # print(x.shape)
-
-    #         activations = activations.view(batch_size, time_size, -1)
-
-            # Pass data through fc1
-    #         x = self.fc1(x)
-    #         x = self.relu(x)
-    # #         x = self.dropout(x)
-    #         x = self.fc2(x).permute(0, 2, 1)
-
-    #         x = self.compress_time(x)
-
-    #         x = x.squeeze(-1)
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = F.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = F.relu(self.fc3(x))
+        x = self.dropout(x)
+        x = self.fc4(x)
 
         return x, activations
+    
+#     def __init__(self, sparse_layer, pca=None):
+#         super().__init__()
+
+# #         self.sparse_layer = sparse_layer
+#         self.pca = pca
+
+# #         self.dropout = torch.nn.Dropout(p=0.5, inplace=False)
+#         if self.pca:
+#             self.fc1 = nn.Linear(40, 20)
+#             self.fc2 = nn.Linear(20, 10)
+#             self.fc3 = nn.Linear(10, 1)
+#         else:
+#             self.compress_activations_conv_1 = nn.Conv3d(in_channels=64, out_channels=32, kernel_size=(1, 8, 8), stride=(1, 4, 4), padding=(1, 4, 4))
+# #             self.max_pool_1 = nn.MaxPool3d(kernel_size=(1, 4, 4))
+# #             self.compress_activations_conv_2 = nn.Conv3d(in_channels=64, out_channels=64, kernel_size=(1, 8, 8), stride=(1, 2, 2), padding=(1, 4, 4))
+# #             self.max_pool_2 = nn.MaxPool3d(kernel_size=(1, 4, 4))
+# #             self.compress_activations_conv_3 = nn.Conv3d(in_channels=64, out_channels=64, kernel_size=(1, 4, 4), stride=(1, 2, 2), padding=(1, 2, 2))
+# #             self.max_pool_3 = nn.MaxPool3d(kernel_size=(1, 4, 4))
+# #             self.compress_activations_ff = nn.Linear(729, 100)
+
+#     #         self.compress_time = nn.Conv3d(in_channels=24, out_channels=24, kernel_size=(14, 1, 1), stride=(1, 1, 1), padding=0)
+# #             self.compress_time = nn.MaxPool3d(kernel_size=(14, 1, 1), stride=(1, 1, 1), padding=0)
+#     #         self.compress_time = nn.GRU(input_size=14, hidden_size=1)
+#     #         self.compress_time = nn.MaxPool2d(kernel_size=(14, 1), stride=1, padding=0)
+#     #         self.compress_time = nn.Linear(14, 10)
+
+# #             self.compress_features = nn.Linear(48, 10)
+
+# #             self.feature_weights = nn.Parameter(torch.rand(48),
+# #                                         requires_grad=True)
+
+#             # First fully connected layer
+#             self.fc1 = nn.Linear(379008, 1000)
+#     # #         self.fc1 = nn.Linear(73008, 128)
+#     #         self.relu = nn.ReLU()
+#             self.fc2 = nn.Linear(1000, 100)
+#             self.fc3 = nn.Linear(100, 20)
+#             self.fc4 = nn.Linear(20, 1)
+
+#     # x represents our data
+#     def forward(self, activations):
+#         # Pass data through conv1
+# #         activations, u = self.sparse_layer(x, u_init)
+        
+#         if self.pca:
+#             x = pca.get_components(activations)
+#             x = F.relu(self.fc1(x)).squeeze(-1)
+#             x = F.relu(self.fc2(x)).squeeze(-1)
+#             x = self.fc3(x).squeeze(-1)
+#             return x, activations, u
+#         else:
+        
+#             batch_size, channel_size, time_size, width_size, height_size = activations.size()
+
+# #             x = torch.zeros_like(activations)
+
+# #             for i in range(channel_size):
+# #                 x[:, i, :, :, :] = activations[:, i, :, :, :] * self.feature_weights[i]
+
+#             x = F.relu(self.compress_activations_conv_1(activations))#.view(batch_size, channel_size, time_size,-1)
+# #             x = F.relu(self.compress_activations_conv_2(x))
+# #             x = F.relu(self.compress_activations_conv_3(x))
+
+# #             x = F.relu(self.compress_time(x))
+
+#     #         x = torch.flatten(x, 1)
+
+#     #         x = self.fc1(x)
+
+# #             x = F.relu(self.compress_features(x))
+#     #         x, _ = self.compress_time(x)
+#     #         x = x.squeeze(2)
+
+#             x = torch.flatten(x, 1)
+
+#             x = F.relu(self.fc1(x))
+#             x = F.relu(self.fc2(x))
+#             x = F.relu(self.fc3(x))
+#             x = self.fc4(x)
+
+#             # x = self.dropout3d(x)
+
+#             # Flatten x with start_dim=1
+#     #         x = torch.flatten(x, 1)
+
+#             # print(x.shape)
+
+#     #         activations = activations.view(batch_size, time_size, -1)
+
+#             # Pass data through fc1
+#     #         x = self.fc1(x)
+#     #         x = self.relu(x)
+#     # #         x = self.dropout(x)
+#     #         x = self.fc2(x).permute(0, 2, 1)
+
+#     #         x = self.compress_time(x)
+
+#     #         x = x.squeeze(-1)
+
+#         return x, activations
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=12, type=int)
-    parser.add_argument('--kernel_height', default=16, type=int)
-    parser.add_argument('--kernel_width', default=16, type=int)
-    parser.add_argument('--kernel_depth', default=4, type=int)
+    parser.add_argument('--kernel_height', default=15, type=int)
+    parser.add_argument('--kernel_width', default=15, type=int)
+    parser.add_argument('--kernel_depth', default=5, type=int)
     parser.add_argument('--num_kernels', default=64, type=int)
     parser.add_argument('--stride', default=1, type=int)
-    parser.add_argument('--max_activation_iter', default=75, type=int)
-    parser.add_argument('--activation_lr', default=1e-2, type=float)
+    parser.add_argument('--max_activation_iter', default=200, type=int)
+    parser.add_argument('--activation_lr', default=1e-1, type=float)
     parser.add_argument('--lr', default=5e-5, type=float)
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--lam', default=0.01, type=float)
@@ -164,21 +197,21 @@ if __name__ == "__main__":
                                    out_channels=args.num_kernels,
                                    kernel_size=(args.kernel_depth, args.kernel_height, args.kernel_width),
                                    stride=args.stride,
-                                   padding=(0, 0, 0),
+                                   padding=(0, 7, 7),
                                    convo_dim=3,
                                    rectifier=True,
                                    lam=args.lam,
                                    max_activation_iter=args.max_activation_iter,
                                    activation_lr=args.activation_lr)
     if args.sparse_checkpoint:
-        sparse_param = torch.load(args.sparse_checkpoint)
+        sparse_param = torch.load(args.sparse_checkpoint, map_location=device)
         frozen_sparse.load_state_dict(sparse_param['model_state_dict'])
 
 #         frozen_sparse.import_opencv_dir('/home/dwh48@drexel.edu/sparse_coding_torch/eds_weights')
 
     frozen_sparse.to(device)
     
-    splits, dataset = load_bamc_clips(batch_size, 0.8, sparse_model=frozen_sparse, device=device, num_frames=args.kernel_depth, seed=args.seed)
+    splits, dataset = load_yolo_clips(batch_size, mode='k_fold', device=device, n_splits=5, sparse_model=frozen_sparse)
     
     overall_true = []
     overall_pred = []
@@ -221,7 +254,7 @@ if __name__ == "__main__":
             pca = PCASparseActivations(train_loader, frozen_sparse, batch_size, device) 
 
 #         predictive_model = SmallDataClassifier(frozen_sparse, pca)
-        predictive_model = torch.nn.DataParallel(SmallDataClassifier(frozen_sparse, pca))
+        predictive_model = torch.nn.DataParallel(SmallDataClassifier())
         predictive_model.to(device)
         
         criterion = torch.nn.BCEWithLogitsLoss()
@@ -250,7 +283,7 @@ if __name__ == "__main__":
                     local_batch = local_batch.to(device)
 
                     torch_labels = torch.zeros(len(labels))
-                    torch_labels[[i for i in range(len(labels)) if labels[i] == 'PTX_No_Sliding']] = 1
+                    torch_labels[[i for i in range(len(labels)) if labels[i] == 'No_Sliding']] = 1
                     torch_labels = torch_labels.unsqueeze(1).to(device)
 
                     pred, activations = predictive_model(local_batch)#, u_init)
@@ -283,7 +316,7 @@ if __name__ == "__main__":
                         local_batch = local_batch.to(device)
 
                         torch_labels = torch.zeros(len(labels))
-                        torch_labels[[i for i in range(len(labels)) if labels[i] == 'PTX_No_Sliding']] = 1
+                        torch_labels[[i for i in range(len(labels)) if labels[i] == 'No_Sliding']] = 1
                         torch_labels = torch_labels.unsqueeze(1).to(device)
 
 
@@ -339,7 +372,7 @@ if __name__ == "__main__":
                 local_batch = local_batch.to(device)
 
                 torch_labels = torch.zeros(len(labels))
-                torch_labels[[i for i in range(len(labels)) if labels[i] == 'PTX_No_Sliding']] = 1
+                torch_labels[[i for i in range(len(labels)) if labels[i] == 'No_Sliding']] = 1
                 torch_labels = torch_labels.unsqueeze(1).to(device)
 
 

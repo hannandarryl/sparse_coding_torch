@@ -4,7 +4,7 @@ import torch
 from sklearn.model_selection import train_test_split, GroupShuffleSplit, LeaveOneGroupOut, LeaveOneOut, StratifiedGroupKFold, StratifiedKFold
 from utils.video_loader import MinMaxScaler, VideoGrayScaler
 from utils.video_loader import VideoLoader
-from utils.video_loader import VideoClipLoader, VideoClipLoaderBAMC, VideoFrameLoader
+from utils.video_loader import VideoClipLoader, VideoClipLoaderBAMC, VideoFrameLoader, YoloClipLoader
 import csv
 
 def load_balls_data(batch_size):
@@ -145,7 +145,7 @@ def load_covid_data(batch_size, clip_length_in_frames=10, frame_rate=20, train_r
     return train_loader, test_loader
 
 def load_bamc_clips(batch_size, train_ratio, sparse_model, device, num_frames=1, seed=None):   
-    video_path = "/shared_data/bamc_data_scale_cropped/"
+    video_path = "/shared_data/YOLO_PL_Model_Results/"
     
     scale = 0.2
     
@@ -222,3 +222,53 @@ def load_bamc_clips(batch_size, train_ratio, sparse_model, device, num_frames=1,
 #                                                         sampler=test_sampler)
 
     return train_loader, test_loader
+
+def load_yolo_clips(batch_size, mode, device, n_splits=None, sparse_model=None):   
+    video_path = "/shared_data/YOLO_Updated_PL_Model_Results/"
+
+    video_to_participant = {}
+    with open('/shared_data/bamc_data/bamc_video_info.csv', 'r') as csv_in:
+        reader = csv.DictReader(csv_in)
+        for row in reader:
+            key = row['Filename'].split('.')[0].lower().replace('_clean', '')
+            if key == '37 (mislabeled as 38)':
+                key = '37'
+            video_to_participant[key] = row['Participant_id']
+            
+    
+    transforms = torchvision.transforms.Compose(
+    [VideoGrayScaler(),
+     torchvision.transforms.Normalize((0.2592,), (0.1251,)),
+    ])
+    augment_transforms = torchvision.transforms.Compose(
+    [torchvision.transforms.RandomRotation(45),
+     torchvision.transforms.RandomHorizontalFlip(),
+     torchvision.transforms.CenterCrop((100, 200))
+    ])
+    dataset = YoloClipLoader(video_path, transform=transforms, augment_transform=augment_transforms, sparse_model=sparse_model, device=device)
+    
+    targets = dataset.get_labels()
+    
+    if mode == 'leave_one_out':
+        gss = LeaveOneGroupOut()
+
+#         groups = [v for v in dataset.get_filenames()]
+        groups = [video_to_participant[v.lower().replace('_clean', '')] for v in dataset.get_filenames()]
+        
+        return gss.split(np.arange(len(targets)), targets, groups), dataset
+    elif mode == 'all_train':
+        train_idx = np.arange(len(targets))
+        train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
+        train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+                                               sampler=train_sampler)
+        test_loader = None
+        
+        return train_loader, test_loader
+    elif mode == 'k_fold':
+        gss = StratifiedGroupKFold(n_splits=n_splits)
+
+        groups = [video_to_participant[v.lower().replace('_clean', '')] for v in dataset.get_filenames()]
+        
+        return gss.split(np.arange(len(targets)), targets, groups), dataset
+    else:
+        return None

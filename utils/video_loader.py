@@ -6,6 +6,7 @@ from os.path import abspath
 import os
 from torchvision.datasets.video_utils import VideoClips
 
+from PIL import Image
 from tqdm import tqdm
 import torch
 import numpy as np
@@ -15,6 +16,8 @@ from torchvision.io import read_video
 import torchvision as tv
 import csv
 from torch import nn
+import json
+from torchvision.transforms import ToTensor
 
 class MinMaxScaler(object):
     """
@@ -173,9 +176,9 @@ class VideoClipLoaderBAMC(Dataset):
         self.sparse_model = sparse_model
             
         vc = VideoClips([path for label, path in self.videos],
-                        clip_length_in_frames=num_frames,
-                        frame_rate=frame_rate,
-                       frames_between_clips=num_frames)
+                        clip_length_in_frames=5,
+                        frame_rate=1,
+                       frames_between_clips=5)
         self.clips = []
         self.video_idx = []
         
@@ -296,6 +299,103 @@ class VideoFrameLoader(Dataset):
     def __len__(self):
         return len(self.videos)
 
+class YoloClipLoader(Dataset):
+    
+    def __init__(self, yolo_output_path, num_frames=5, frames_between_clips=None,
+                 transform=None, augment_transform=None, sparse_model=None, device=None):
+        if (num_frames % 2) == 0:
+            raise ValueError("Num Frames must be an odd number, so we can extract a clip centered on each detected region")
+        
+        clip_cache_file = 'clip_cache.pt'
+        
+        self.num_frames = num_frames
+        if frames_between_clips is None:
+            self.frames_between_clips = num_frames
+        else:
+            self.frames_between_clips = frames_between_clips
+
+        self.transform = transform
+        self.augment_transform = augment_transform
+         
+        self.labels = [name for name in listdir(yolo_output_path) if isdir(join(yolo_output_path, name))]
+        self.clips = []
+        if os.path.exists(clip_cache_file):
+            self.clips = torch.load(open(clip_cache_file, 'rb'))
+        else:
+            for label in self.labels:
+                print("Processing videos in category: {}".format(label))
+                videos = list(listdir(join(yolo_output_path, label)))
+                for vi in tqdm(range(len(videos))):
+                    video = videos[vi]
+                    with open(abspath(join(yolo_output_path, label, video, 'result.json'))) as fin:
+                        results = json.load(fin)
+                        max_frame = len(results)
+
+                        for i in range((num_frames-1)//2, max_frame - (num_frames-1)//2 - 1, self.frames_between_clips):
+                        # for frame in results:
+                            frame = results[i]
+                            # print('loading frame:', i, frame['frame_id'])
+                            frame_start = int(frame['frame_id']) - self.num_frames//2
+                            frames = [abspath(join(yolo_output_path, label, video, 'frame{}.png'.format(frame_start+fid)))
+                                      for fid in range(num_frames)]
+                            # print(frames)
+                            frames = torch.stack([ToTensor()(Image.open(f).convert("RGB")) for f in frames]).swapaxes(0, 1)
+
+                            for region in frame['objects']:
+                                # print(region)
+                                if region['name'] != "Pleural_Line":
+                                    continue
+
+                                center_x = region['relative_coordinates']["center_x"] * 1920
+                                center_y = region['relative_coordinates']['center_y'] * 1080
+
+                                # width = region['relative_coordinates']['width'] * 1920
+                                # height = region['relative_coordinates']['height'] * 1080
+                                width=400
+                                height=400
+
+                                lower_y = round(center_y - height / 2)
+                                upper_y = round(center_y + height / 2)
+                                lower_x = round(center_x - width / 2)
+                                upper_x = round(center_x + width / 2)
+
+                                final_clip = frames[:, :, lower_y:upper_y, lower_x:upper_x]
+
+                                if self.transform:
+                                    final_clip = self.transform(final_clip)
+
+                                if sparse_model:
+                                    with torch.no_grad():
+                                        final_clip = final_clip.unsqueeze(0).to(device)
+                                        u_init = torch.zeros([1, sparse_model.out_channels] + sparse_model.get_output_shape(final_clip))
+                                        final_clip, _ = sparse_model(final_clip, u_init)
+                                        final_clip = final_clip.squeeze(0).detach().cpu()
+
+                                self.clips.append((label, final_clip, video))
+
+            torch.save(self.clips, open(clip_cache_file, 'wb+'))
+                            
+
+            
+    def get_labels(self):
+        return [self.clips[i][0] for i in range(len(self.clips))]
+    
+    def get_filenames(self):
+        return [self.clips[i][2] for i in range(len(self.clips))]
+    
+    def __getitem__(self, index):        
+        label = self.clips[index][0]
+        video = self.clips[index][1]
+        filename = self.clips[index][2]
+        
+        if self.augment_transform:
+            video = self.augment_transform(video)
+            
+        return label, video, filename
+        
+    def __len__(self):
+        return len(self.clips)
+    
 
 if __name__ == "__main__":
     video_path = "/shared_data/bamc_data/"
